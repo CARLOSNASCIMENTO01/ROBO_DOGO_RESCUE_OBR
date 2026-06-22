@@ -1,0 +1,5 @@
+env_novo/
+__pycache__/
+*.pyc
+.vscode/
+.lgd-*
