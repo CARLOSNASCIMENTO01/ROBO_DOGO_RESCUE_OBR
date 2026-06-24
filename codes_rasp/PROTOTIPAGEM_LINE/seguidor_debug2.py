@@ -19,20 +19,27 @@ h = GPIO.gpiochip_open(0)
 # =========================
 # CONFIG (NÃO ALTERADO)
 # =========================
-Kp = 2 #2
-Kd = 0.8 #0.8
+Kp = 2.7 #1.5
+Kd = 1.2 #0.5
 tempo_sem_linha = 0 
-VEL_BASE = 30
-VEL_MAX  = 45 #50
+VEL_BASE = 30 # 24
+VEL_MAX  = 40 #40
 VEL_MIN  = -VEL_MAX #-50
-VEL_GAP = 35
+VEL_GAP = 27
 LIMIAR   = 80
-DEADZONE = 6 #4
-AREA_MIN = 6000
+DEADZONE = 6#4
+AREA_MIN = 11000 #6000
 girando = False
 
+em_rampa = False
+
+# L298N 1
 IN1, IN2, ENA = 17, 18, 12
 IN3, IN4, ENB = 22, 23, 13
+
+# L298N 2
+IN5, IN6, ENC = 5, 6, 19
+IN7, IN8, END = 16, 20, 21
 BUTTON = 24
 
 contador_direita = 0
@@ -120,13 +127,20 @@ print("Handshake enviado pro Arduino")
 # GPIO INIT
 # =========================
 GPIO.gpio_claim_input(h, BUTTON, GPIO.SET_PULL_UP)
-pins = [IN1, IN2, IN3, IN4, ENA, ENB]
+pins = [
+    IN1, IN2, ENA,
+    IN3, IN4, ENB,
+    IN5, IN6, ENC,
+    IN7, IN8, END
+]
 
 for p in pins:
     GPIO.gpio_claim_output(h, p)
 
 GPIO.tx_pwm(h, ENA, 50, 0)
-GPIO.tx_pwm(h, ENB,50, 0)
+GPIO.tx_pwm(h, ENB, 50, 0)
+GPIO.tx_pwm(h, ENC, 50, 0)
+GPIO.tx_pwm(h, END, 50, 0)
 # =========================
 # FUNÇOES DE COMUNICACAO COM NANO (NÃO ALTERADO)
 # =========================
@@ -250,7 +264,8 @@ def distancia_esquerda():
 # MOTORES (NÃO ALTERADO)
 # =========================
 def aplicar_motor(in1, in2, pwm_pin, vel):
-    vel = max(min(vel, VEL_MAX), VEL_MIN)
+
+    vel = max(min(vel, 100), -100)
 
     if vel > 0:
         GPIO.gpio_write(h, in1, 0)
@@ -264,12 +279,30 @@ def aplicar_motor(in1, in2, pwm_pin, vel):
         GPIO.gpio_write(h, in1, 0)
         GPIO.gpio_write(h, in2, 0)
 
-    duty = min(abs(vel), 100)
-    GPIO.tx_pwm(h, pwm_pin, 50, duty)
+    GPIO.tx_pwm(h, pwm_pin, 50, abs(vel))
+
+def mover4(m1, m2, m3, m4):
+
+    # Frente esquerda
+    aplicar_motor(IN2, IN1, ENA, m1)
+
+    # Trás esquerda
+    aplicar_motor(IN4, IN3, ENB, m2)
+
+    # Frente direita
+    aplicar_motor(IN6, IN5, ENC, m3)
+
+    # Trás direita
+    aplicar_motor(IN8, IN7, END, m4)
 
 def mover(velL, velR):
-    aplicar_motor(IN2, IN1, ENA, velL)
-    aplicar_motor(IN4, IN3, ENB, velR)
+
+    mover4(
+        velL,  # frente esquerdo
+        velR,  # frente direito
+        velL,  # traseiro esquerdo
+        velR   # traseiro direito
+    )
 
 def parar():
     mover(0, 0)
@@ -487,7 +520,7 @@ def check_green(contours_grn, black_image, green_image):
     """if not turn_180 and not turn_left and not turn_right:
         print("none")"""
     pixels_verde = cv2.countNonZero(green_image)
-    #print(pixels_verde)
+    print(pixels_verde)
     if turn_180:
         contador_180 += 1
     else:
@@ -594,7 +627,7 @@ def limpar_camera(n=5):
 
 
 def controle(frame):
-    global ultimo_erro, ultimo_tempo
+    global ultimo_erro, ultimo_tempo, em_rampa,VEL_BASE, VEL_MIN, VEL_MAX
 
     
     cx, contours, roi, mask = visao(frame)
@@ -604,45 +637,9 @@ def controle(frame):
 
     em_gap = gap(contours)
     w = roi.shape[1]
-    if em_gap:
-        print("gap")
-        cv2.putText(roi, "GAP", (10,30),
-        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-
-        while True:
-
-            """if distancia_esquerda() < 15:
-                mover(-19, -19)
-                time.sleep(0.09)
-                mover(-40, -40)
-                time.sleep(0.8)
-                if distancia_esquerda() > 25:
-                    print(area)
-                else :
-                    print("nada so gap e continua ")
-                break   """
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            #print(distancia_esquerda())
-            cx, contours, roi, mask = visao(frame)
-            
-            if not gap(contours) :
-               
-                print("saí")
-
-                ultimo_erro = 0
-                ultimo_tempo = time.time()
-
-                parar()
-                break   
-
-            mover(VEL_GAP, VEL_GAP)
-        return contours
-        #print("area:", cv2.contourArea(max(contours, key=cv2.contourArea)) if contours else 0)
-        #cv2.imshow("roi", roi)
-        #cv2.imshow("mask", mask)
-        #cv2.waitKey(1)
+    
+    
+        
 
     # ===== CONTROLE NORMAL =====
     tempo_atual = time.time()
@@ -659,7 +656,8 @@ def controle(frame):
     #print("ERRO", erro)
     if abs(erro) < DEADZONE:
         erro = 0
-    
+    if gap_debug(contours):
+        erro = 0
     derivada = (erro - ultimo_erro) / dt
 
     derivada = np.clip(derivada, -300, 300)
@@ -671,30 +669,41 @@ def controle(frame):
     velL = VEL_BASE + ajuste
     velR = VEL_BASE - ajuste
     
-    if angulo_y() < -10 :
-        print("to pra cima ")
-        while True:
-            velocidade_base_ajustada = VEL_BASE + 30
-            velL = velocidade_base_ajustada + ajuste
-            velR = velocidade_base_ajustada - ajuste 
-            velL = np.clip(velL, -30, 200)
-            velR = np.clip(velR, -30, 200)
-            mover(velL, velR)
-            print("VEL ESQUERDA dentro do while" , velL)
-            if angulo_y()>= -1:
-                parar()
-                time.sleep(2)
-                break
-        
+    '''if angulo_y() < -10:
+   
+        andar_reto(50,2)
+        """inclinacao = abs(angulo_y())  # quanto mais inclinado, mais veloz
+        vel_rampa = np.clip(80 + (inclinacao - 10) * 1.5, 30, 70)  # 80~100 gradual
+
+        ajuste_rampa = np.clip(ajuste, -200, 200)  # limita correção na rampa
+        velL = vel_rampa + ajuste_rampa
+        velR = vel_rampa - ajuste_rampa
+
+        # motor mais lento não pode cair abaixo de 65
+        velL = max(velL, 45)
+        velR = max(velR, 45)
+
+        print(f"[RAMPA] incl={inclinacao}° vel_base={vel_rampa:.0f} L={velL:.0f} R={velR:.0f}")
+        mover(velL, velR)
+        ultimo_erro = erro
+        ultimo_tempo = tempo_atual"""
+        em_rampa = True 
+        return ajuste, contours
+    if em_rampa and angulo_y() > 0:
+        print("caiiiiiiiiiiiiiiiiii")
+        parar()
+        time.sleep(2.0)
+      
+        em_rampa = False'''
         
     
     velL = np.clip(velL, VEL_MIN, VEL_MAX)
     velR = np.clip(velR, VEL_MIN, VEL_MAX)
-    mover(velL, velR)
+    #mover(velL, velR)
     print("VEL ESQUERDA fora do while" , velL)
     #print("VEL DIREITA",velR) 
     
-    #mover(velL, velR)
+    mover(velL, velR)
 
     #cv2.imshow("roi", roi)
     #cv2.imshow("mask", mask)
@@ -769,16 +778,24 @@ def verde(frame):
         parar()
         #print ("acao de verde ", acao_verde)
         if acao_verde == "ESQUERDA":
+            """limpar_camera(10)
+            mover(-15,-15)
+            time.sleep(0.02)
+            guinada2("E",60,40)
+            mover(30,30)
+            time.sleep(0.26)
+            mover(-10,-10)
+            time.sleep(0.02)"""
             limpar_camera(10)
-            guinada2('D', 9, 35)
+            guinada2('D', 12, 35)
             mover(50,50)
-            time.sleep(0.21)
+            time.sleep(0.19)
             mover(-19,-19)
             time.sleep(0.09)
             print("fui para frente e parei ")
             parar()
             print("virar esquerda ")
-            guinada2('E', 90, 38)
+            guinada2('E', 90, 35)
             mover(-19,-19)
             time.sleep(0.09)
 
@@ -791,16 +808,25 @@ def verde(frame):
 
 
         elif acao_verde == "DIREITA":
+            """limpar_camera(10)
+            mover(-15,-15)
+            time.sleep(0.02)
+            guinada2("D",60,40)
+            mover(30,30)
+            time.sleep(0.26)
+            mover(-10,-10)
+            time.sleep(0.02)
+            limpar_camera(10)"""
             limpar_camera(10)
-            guinada2('E', 9, 35)
+            guinada2('E', 12, 35)
             mover(50,50)
-            time.sleep(0.21)
+            time.sleep(0.19)
             mover(-19,-19)
             time.sleep(0.09)
             print("fui para frente e parei ")
             parar()
             print("virar esquerda ")
-            guinada2('D', 90, 38)
+            guinada2('D', 90, 35)
             mover(-19,-19)
             time.sleep(0.09)
 
@@ -815,15 +841,16 @@ def verde(frame):
             print("gira 180")
             mover(50,50)
             time.sleep(0.1)
-            mover(-19,-19)
+            mover(-10,-10)
             time.sleep(0.09)
             parar()
             time.sleep(1.0)
             guinada2('E', 180, 35)
             mover(50,50)
             time.sleep(0.19)
-            mover(-19,-19)
-            time.sleep(0.09)
+            mover(-10,-10)
+            time.sleep(0.05)
+            parar()
             """
             time.sleep(0.2)
             parar()"""
@@ -839,8 +866,8 @@ def guinada2(LADO, GRAUS, VELOCIDADE):
             mover(VELOCIDADE, -VELOCIDADE)
             if angulo_z() <= -Graus:   # ← era >= , trocado
                 print("PAROU")
-                mover(-20, 20)
-                time.sleep(0.09)
+                mover(-10, 10)
+                time.sleep(0.05)
                 break
     else:
         while True:
@@ -848,8 +875,8 @@ def guinada2(LADO, GRAUS, VELOCIDADE):
             mover(-VELOCIDADE, VELOCIDADE)
             if angulo_z() >= Graus:    # ← era <= -Graus, trocado
                 print("PAROU")
-                mover(20, -20)
-                time.sleep(0.09)
+                mover(10, -10)
+                time.sleep(0.05)
                 break
 
 def detectar_fita_vermelha(frame):
@@ -871,48 +898,137 @@ def detectar_fita_vermelha(frame):
 # =========================
 # LOOP
 # =========================
+def andar_reto(velocidade=30, segundos=1.0):
 
+    resetar_giroscopio()
+
+    Kp = -2
+    Ki = -0.2
+    Kd = -0.4
+
+    erro_anterior = 0
+    integral = 0
+
+    ultimo_tempo = time.time()
+    inicio = ultimo_tempo
+
+    while time.time() - inicio < segundos:
+
+        agora = time.time()
+        dt = agora - ultimo_tempo
+
+        if dt <= 0:
+            dt = 0.001
+
+        erro = angulo_z()
+
+        integral += erro * dt
+        integral = np.clip(integral, -30, 30)
+
+        derivada = (erro - erro_anterior) / dt
+
+        ajuste = (
+            Kp * erro +
+            Ki * integral +
+            Kd * derivada
+        )
+
+        velL = velocidade - ajuste
+        velR = velocidade + ajuste
+
+        mover(velL, velR)
+
+        erro_anterior = erro
+        ultimo_tempo = agora
+
+        time.sleep(0.01)
+
+    parar()
+
+def gap_debug(contours):
+    if len(contours) == 0:
+        #print("[GAP] Tem gap | Ângulo: indefinido (sem contornos)")
+        return True
+
+    maior = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(maior)
+
+    if area < AREA_MIN:
+        box = cv2.boxPoints(cv2.minAreaRect(maior))
+        box = box[box[:, 1].argsort()]
+
+        p1, p2 = box[0], box[1]
+        vector = p1 - p2
+        norma = np.linalg.norm(vector)
+
+        if norma > 0:
+            angulo = math.degrees(math.acos(
+                np.clip(np.dot(vector, [1, 0]) / norma, -1, 1)
+            ))
+            angulo = angulo if p1[0] < p2[0] else -angulo
+            if angulo == 180:
+                angulo = 0
+        else:
+            angulo = 0
+
+        """if p1[1] < camera_y * 0.95 and p2[1] < camera_y * 0.95:
+            #print(f"[GAP] Tem gap | Ângulo: {angulo:.1f}°")
+        else:
+            #print(f"[GAP] Tem gap | Ângulo: indefinido (pontos no rodapé)")"""
+
+        return True
+
+    print(f"[GAP] Não tem gap | Área: {area:.0f}")
+    return False
 """time.sleep(1.0)"""
 #guinada2('D', 90, 35)
 parar()
-#time.sleep(3.0)
+
 try:
     while True:
-        #distancia_F = ler_ultrassonico()
-        # BOTÃO
         estado = GPIO.gpio_read(h, BUTTON)
-        
-        #print("outro")
         if estado == 1:
             parar()
-            print("parado")
             resetar_giroscopio()
-            #receberdado("R")
-            continue
-        
-        ret, frame = cap.read()
-        if detectar_fita_vermelha(frame):
-            continue
-        else:
-            '''alinhar_linha(frame)
-            cv2.imshow("ROI", visao(frame)[2])'''
-            contours = controle(frame)
-            verde(frame)
-            #gangorra()
-            #desvio() 
-            #print(angulo_y())
-            #if contours: 
-                #achar_area(contours)
-            #print(distancia_frente())
-            
-            #time.sleep(2.0)
-            #print(angulo_z())
-        if cv2.waitKey(1) == 27:
-            break
-        if not ret and contours is None:
             continue
 
-       
+        ret, frame = cap.read()
+        if not ret:
+            continue
+
+        if detectar_fita_vermelha(frame):
+            continue
+
+        ajuste, contours = controle(frame)
+
+        verde(frame)
+
+        if gap_debug(contours) and distancia_esquerda()< 10:
+            inicio_gap = time.time()
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+                
+                cx, contours, roi, mask = visao(frame)
+                
+                if not gap_debug(contours):
+                    print("[GAP] Saiu do gap, voltando à linha")
+                    break
+                
+                if time.time() - inicio_gap > 1:
+                    
+                    print("[RESGATE] Área de resgate detectada!")
+                    parar()
+                    mover(-15,-15)
+                    time.sleep(0.1)
+                    time.sleep(1000.0)
+                    break
+                
+                mover(VEL_GAP, VEL_GAP)
+
+        if cv2.waitKey(1) == 27:
+            break
 
 except KeyboardInterrupt:
     print("Finalizado")
