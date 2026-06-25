@@ -20,14 +20,14 @@ h = GPIO.gpiochip_open(0)
 # CONFIG (NÃO ALTERADO)
 # =========================
 Kp = 2.7 #1.5
-Kd = 1.2 #0.5
+Kd = 0.9 #0.5
 tempo_sem_linha = 0 
-VEL_BASE = 30 # 24
-VEL_MAX  = 40 #40
+VEL_BASE = 27 # 24
+VEL_MAX  = 50 #40
 VEL_MIN  = -VEL_MAX #-50
 VEL_GAP = 27
 LIMIAR   = 80
-DEADZONE = 6#4
+DEADZONE = 4#4
 AREA_MIN = 11000 #6000
 girando = False
 
@@ -355,34 +355,35 @@ def gap(contours):
     tempo_gap = 0
     return False
 
-def angulo_linha(frame):
-    cx, contours, roi, mask = visao(frame)
-    
+def angulo_linha(contours):
     if not contours:
         return None
     
-    maior = max(contours, key=cv2.contourArea)
+    # filtra contornos grandes o suficiente
+    validos = [c for c in contours if cv2.contourArea(c) >= AREA_MIN]
     
-    if cv2.contourArea(maior) < AREA_MIN:
+    if not validos:
         return None
     
-    [vx, vy, x0, y0] = cv2.fitLine(maior, cv2.DIST_L2, 0, 0.01, 0.01)
-    
-    angulo = math.degrees(math.atan2(vx, vy))
-    
-    # Desenha a linha ajustada na ROI
-    h, w = roi.shape[:2]
-    t = max(h, w)
-    x1 = int(x0 - vx * t)
-    y1 = int(y0 - vy * t)
-    x2 = int(x0 + vx * t)
-    y2 = int(y0 + vy * t)
-    cv2.line(roi, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    cv2.putText(roi, f"{angulo:.1f} graus", (10, 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    
-    return angulo
+    melhor = None
+    menor_angulo = 9999
 
+    for c in validos:
+        [vx, vy, x0, y0] = cv2.fitLine(c, cv2.DIST_L2, 0, 0.01, 0.01)
+        angulo = math.degrees(math.atan2(float(vy), float(vx)))
+
+        if angulo > 90:
+            angulo -= 180
+        elif angulo < -90:
+            angulo += 180
+
+        angulo = int(angulo - 90)
+
+        if abs(angulo) < abs(menor_angulo):
+            menor_angulo = angulo
+            melhor = c
+
+    return menor_angulo    
 def alinhar_linha(frame):
     global tempo_sem_linha
 
@@ -596,7 +597,7 @@ def limpar_camera(n=5):
 
 
 def controle(frame):
-    global ultimo_erro, ultimo_tempo, em_rampa,VEL_BASE, VEL_MIN, VEL_MAX
+    global ultimo_erro, ultimo_tempo, em_rampa
 
     
     cx, contours, roi, mask = visao(frame)
@@ -747,78 +748,60 @@ def verde(frame):
         parar()
         #print ("acao de verde ", acao_verde)
         if acao_verde == "ESQUERDA":
-            """limpar_camera(10)
-            mover(-15,-15)
-            time.sleep(0.02)
-            guinada2("E",60,40)
-            mover(30,30)
-            time.sleep(0.26)
+           
             mover(-10,-10)
-            time.sleep(0.02)"""
-            limpar_camera(10)
-            guinada2('D', 12, 35)
-            mover(50,50)
-            time.sleep(0.19)
-            mover(-19,-19)
-            time.sleep(0.09)
+            time.sleep(0.1)
+            mover(30,30)
+            time.sleep(0.22)
+           
             print("fui para frente e parei ")
             parar()
             print("virar esquerda ")
-            guinada2('E', 90, 35)
-            mover(-19,-19)
-            time.sleep(0.09)
-
-            parar()
-            mover(50,50)
+            guinada2('E', 80, 40)
+            inicio = time.time()
+            while time.time() - inicio < 1.0:
+                ret, frame = cap.read()
+                print("s segui linhaaaaaaaaaaaaaaaaaaa ")
+                if not ret:
+                    continue
+                controle(frame)
+            """mover(30,30)
             time.sleep(0.20)
-            mover(-19,-19)
+            mover(-12,-12)
             print("virei e parei ")
-            limpar_camera(10)
+            limpar_camera(10)"""
 
 
         elif acao_verde == "DIREITA":
-            """limpar_camera(10)
-            mover(-15,-15)
-            time.sleep(0.02)
-            guinada2("D",60,40)
-            mover(30,30)
-            time.sleep(0.26)
-            mover(-10,-10)
-            time.sleep(0.02)
-            limpar_camera(10)"""
             limpar_camera(10)
-            guinada2('E', 12, 35)
-            mover(50,50)
-            time.sleep(0.19)
-            mover(-19,-19)
-            time.sleep(0.09)
+            #guinada2('D', 17, 35)
+            mover(-10,-10)
+            time.sleep(0.1)
+            mover(30,30)
+            time.sleep(0.22)
             print("fui para frente e parei ")
             parar()
             print("virar esquerda ")
-            guinada2('D', 90, 35)
-            mover(-19,-19)
-            time.sleep(0.09)
-
-            parar()
-            mover(50,50)
-            time.sleep(0.20)
-            mover(-19,-19)
-            print("virei e parei ")
-            limpar_camera(10)
+            guinada2('D', 80, 40)
+            inicio = time.time()
+            while time.time() - inicio < 1.0:
+                ret, frame = cap.read()
+                print("s segui linhaaaaaaaaaaaaaaaaaaa ")
+                if not ret:
+                    continue
+                controle(frame)
 
         elif acao_verde == "GIRAR_180":
             print("gira 180")
-            mover(50,50)
-            time.sleep(0.1)
-            mover(-10,-10)
+            
+            mover(-12,-12)
             time.sleep(0.09)
-            parar()
-            time.sleep(1.0)
-            guinada2('E', 180, 35)
-            mover(50,50)
+            
+            guinada2('E', 180, 40)
+            mover(30,30)
             time.sleep(0.19)
             mover(-10,-10)
-            time.sleep(0.05)
+            time.sleep(0.2)
             parar()
             """
             time.sleep(0.2)
@@ -828,7 +811,7 @@ def verde(frame):
 def guinada2(LADO, GRAUS, VELOCIDADE):
     resetar_giroscopio()
     time.sleep(0.1)
-    Graus = abs(GRAUS - 10)
+    Graus = abs(GRAUS - 13)
     if LADO == 'D':
         while True:
             print(angulo_z())
@@ -971,6 +954,8 @@ try:
         ajuste, contours = controle(frame)
 
         verde(frame)
+        #print("distancia frente:", distancia_frente())
+        #print("distancia esquerda:", distancia_esquerda())
 
         if gap_debug(contours) and distancia_esquerda()< 10:
             inicio_gap = time.time()
@@ -995,7 +980,7 @@ try:
                     break
                 
                 mover(VEL_GAP, VEL_GAP)
-
+                        
         if cv2.waitKey(1) == 27:
             break
 
