@@ -636,43 +636,27 @@ def controle(frame):
     
     
     #print("AJUSTE", ajuste)       
-    velL = VEL_BASE + ajuste
-    velR = VEL_BASE - ajuste
-    
-    '''if angulo_y() < -10:
-   
-        andar_reto(50,2)
-        """inclinacao = abs(angulo_y())  # quanto mais inclinado, mais veloz
-        vel_rampa = np.clip(80 + (inclinacao - 10) * 1.5, 30, 70)  # 80~100 gradual
+   # Modo gangorra/rampa
+    if angulo_y() <= -6:
 
-        ajuste_rampa = np.clip(ajuste, -200, 200)  # limita correção na rampa
-        velL = vel_rampa + ajuste_rampa
-        velR = vel_rampa - ajuste_rampa
+        velocidade_base = 60
 
-        # motor mais lento não pode cair abaixo de 65
-        velL = max(velL, 45)
-        velR = max(velR, 45)
+        velL = velocidade_base + ajuste
+        velR = velocidade_base - ajuste
 
-        print(f"[RAMPA] incl={inclinacao}° vel_base={vel_rampa:.0f} L={velL:.0f} R={velR:.0f}")
-        mover(velL, velR)
-        ultimo_erro = erro
-        ultimo_tempo = tempo_atual"""
-        em_rampa = True 
-        return ajuste, contours
-    if em_rampa and angulo_y() > 0:
-        print("caiiiiiiiiiiiiiiiiii")
-        parar()
-        time.sleep(2.0)
-      
-        em_rampa = False'''
-        
-    
-    velL = np.clip(velL, VEL_MIN, VEL_MAX)
-    velR = np.clip(velR, VEL_MIN, VEL_MAX)
-    #mover(velL, velR)
-    print("VEL ESQUERDA fora do while" , velL)
-    #print("VEL DIREITA",velR) 
-    
+        velL = np.clip(velL, 20, 100)
+        velR = np.clip(velR, 20, 100)
+
+    else:
+
+        velocidade_base = VEL_BASE
+
+        velL = velocidade_base + ajuste
+        velR = velocidade_base - ajuste
+
+        velL = np.clip(velL, VEL_MIN, VEL_MAX)
+        velR = np.clip(velR, VEL_MIN, VEL_MAX)
+
     mover(velL, velR)
 
     #cv2.imshow("roi", roi)
@@ -684,63 +668,33 @@ def controle(frame):
 
 def desvio():
     if distancia_frente() <= 6:
-        mover(-19,-19)
+        mover(-10,-10)
         time.sleep(0.09)
-        guinada2('D', 87, 50)  
-        mover(40, 40)
-        time.sleep(0.15)
-        mover(-19,-19)
-        time.sleep(0.09)
-        parar()
-        time.sleep(0.5)
-        while True:
-            ret, frame = cap.read()
-            if alinhar_linha(frame):
-                print("Alinhado!")
-                break
-        '''mover(50, 50)
-        time.sleep(0.1)
-        mover(-19,-19)
-        time.sleep(0.09)
-        parar()
-        time.sleep(0.5)
-        while True:
-            ret, frame = cap.read()
-            if alinhar_linha(frame):
-                print("Alinhado!")
-                break'''
-        mover(40, 40)
-        time.sleep(0.8)
-        mover(-19,-19)
-        time.sleep(0.09)
-        guinada2('E', 87, 40)
+        guinada2('D', 85, 35)  
         mover(40,40)
-        time.sleep(1.3)
-        mover(-19,-19)
+        time.sleep(0.2)
+        mover(-10,-10)
         time.sleep(0.09)
-        parar()
-        guinada2('E', 87, 40)
-        mover(40, 40)
-        time.sleep(0.7)
-        mover(-19,-19)
-        time.sleep(0.09)    
-        guinada2('D', 87, 40)
-
-def gangorra():
-    
-    """if angulo_y() >= 6:
-        print("gangorra")
+        vezes = 0
         while True:
-            ret, frame = cap.read()
-            ajuste, contours = controle(frame)
-            velocidade_ajustada = (VEL_BASE + (angulo_y() * 3))
-            ajuste2 = int(ajuste)
-            velL = velocidade_ajustada + ajuste2
-            velR = velocidade_ajustada - ajuste2
-            mover(velL, velR)
-            if angulo_y() <= 2:
-                break  """      
-                    
+            if distancia_esquerda() >=6:
+                mover(0,100)
+                time.sleep(0.12)
+                mover(40,40)
+                time.sleep(0.1)
+                mover(-10,-10)
+                time.sleep(0.09)
+            elif distancia_esquerda() < 4 :
+                guinada2("D", 15, 35)
+                mover(40,40)
+                time.sleep(0.2)
+                mover(-10,-10)
+                time.sleep(0.09)
+            vezes += 1
+            if vezes == 18:
+                break
+
+
 
 def verde(frame):
     acao_verde = detectar_verde(frame)
@@ -952,8 +906,9 @@ try:
             continue
 
         ajuste, contours = controle(frame)
-
+    
         verde(frame)
+        desvio()
         #print("distancia frente:", distancia_frente())
         #print("distancia esquerda:", distancia_esquerda())
 
