@@ -19,8 +19,8 @@ h = GPIO.gpiochip_open(0)
 # =========================
 # CONFIG (NÃO ALTERADO)
 # =========================
-Kp = 2.7 #1.5
-Kd = 0.9 #0.5
+Kp = 1.6 #2.7
+Kd = 0.7 #0.9
 tempo_sem_linha = 0 
 VEL_BASE = 27 # 24
 VEL_MAX  = 50 #40
@@ -57,6 +57,17 @@ black_max_bot = np.array([135, 135, 135])
 
 MIN_GREEN_AREA = 2500
 kernal = np.ones((3, 3), np.uint8)
+
+# =========================
+# DEBUG — mude para True pra ativar janelas e prints de verde
+# =========================
+DEBUG_VERDE = True
+
+# =========================
+# DEBUG SEM AÇÃO — True: detecta e imprime verde mas NÃO executa giros
+# Útil pra calibrar detecção com o robô seguindo linha normalmente
+# =========================
+DEBUG_SEM_ACAO = False
 # =========================
 # SERIAL (NÃO ALTERADO)
 # =========================
@@ -484,11 +495,10 @@ def check_green(contours_grn, black_image, green_image):
 
         green_box = cv2.boxPoints(cv2.minAreaRect(contour))
         green_centers.append(float(np.mean(green_box[:, 0])))
-        black_around_sign = check_black(black_around_sign, i, green_box, black_image)  # ← sem .copy()
+        black_around_sign = check_black(black_around_sign, i, green_box, black_image)
 
     turn_left, turn_right, turn_180 = determine_turn_direction(black_around_sign, green_centers)
-    """if not turn_180 and not turn_left and not turn_right:
-        print("none")"""
+
     pixels_verde = cv2.countNonZero(green_image)
     print(pixels_verde)
     if turn_180:
@@ -508,35 +518,87 @@ def check_green(contours_grn, black_image, green_image):
 
     if turn_180:
         return "GIRAR_180"
-    elif turn_left and pixels_verde < 15500 and contador_esquerda > 2 and contador_direita < 1:
+    elif turn_left and pixels_verde < 15500: #and pixels_verde < 15500 and contador_esquerda > 2 and contador_direita < 1:
         return "ESQUERDA"
-    elif turn_right  and pixels_verde < 15500 and contador_direita > 2 and contador_esquerda < 1:
+    elif turn_right and  pixels_verde < 15500 :#and pixels_verde < 15500 and contador_direita > 2 and contador_esquerda < 1:
         return "DIREITA"
     else:
         return "RETO"
-def detectar_verde(frame):
-    """Retorna acao verde ou None se nao encontrou nada relevante."""
-    black_image = cv2.inRange(frame, black_min, black_max_bot)
-    black_image[0:int(camera_y * 0.4), 0:camera_x] = cv2.inRange(
-        frame, black_min, black_max_top)[0:int(camera_y * 0.4), 0:camera_x]
-    black_image = cv2.erode(black_image,  kernal, iterations=2)
-    black_image = cv2.dilate(black_image, kernal, iterations=5)
-    black_image = cv2.erode(black_image,  kernal, iterations=3)
 
-    hsv         = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+# =========================
+# DETECTAR VERDE
+# MUDANÇA: recebe roi (já cortado por visao()) em vez do frame inteiro
+# Morfologia reduzida: era erode(2)+dilate(5)+erode(3), agora dilate(3)+erode(2)
+# =========================
+def detectar_verde(roi):
+    """Retorna acao verde ou None. Recebe roi já calculado por visao()."""
+    roi_h, roi_w = roi.shape[:2]
+    corte_top = int(roi_h * 0.4)
+
+    # --- Preto ---
+    black_image = cv2.inRange(roi, black_min, black_max_bot)
+    black_image[:corte_top, :] = cv2.inRange(
+        roi[:corte_top, :], black_min, black_max_top)
+    # morfologia reduzida
+    black_image = cv2.dilate(black_image, kernal, iterations=3)
+    black_image = cv2.erode(black_image,  kernal, iterations=2)
+
+    # --- Verde ---
+    hsv         = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     green_image = cv2.inRange(hsv, green_min, green_max)
-    green_image = cv2.erode(green_image,  kernal, iterations=1)
-    green_image = cv2.dilate(green_image, kernal, iterations=5)
-    green_image = cv2.erode(green_image,  kernal, iterations=3)
-    #print(cv2.countNonZero(green_image))
+    # morfologia reduzida
+    green_image = cv2.dilate(green_image, kernal, iterations=3)
+    green_image = cv2.erode(green_image,  kernal, iterations=2)
+
     contours_grn, _ = cv2.findContours(
         green_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    # =======================
+    # DEBUG VERDE — ative com DEBUG_VERDE = True no topo do arquivo
+    # Mostra: roi original | mask verde | mask preto | contornos + ação
+    # =======================
+    # if DEBUG_VERDE:
+    #     debug_roi   = roi.copy()
+    #     debug_verde = cv2.cvtColor(green_image, cv2.COLOR_GRAY2BGR)
+    #     debug_preto = cv2.cvtColor(black_image, cv2.COLOR_GRAY2BGR)
+    #
+    #     pixels_verde = cv2.countNonZero(green_image)
+    #     n_contornos  = len(contours_grn)
+    #
+    #     for c in contours_grn:
+    #         if cv2.contourArea(c) > MIN_GREEN_AREA:
+    #             cv2.drawContours(debug_roi, [c], -1, (0, 255, 0), 1)
+    #             box = cv2.boxPoints(cv2.minAreaRect(c))
+    #             box = np.int0(box)
+    #             cv2.drawContours(debug_roi, [box], -1, (0, 165, 255), 1)
+    #
+    #     label = f"px:{pixels_verde} cnt:{n_contornos}"
+    #     cv2.putText(debug_roi, label, (2, 10),
+    #                 cv2.FONT_HERSHEY_PLAIN, 0.8, (255, 255, 0), 1)
+    #
+    #     linha = np.hstack([debug_roi, debug_verde, debug_preto])
+    #     cv2.imshow("DEBUG VERDE | roi | verde | preto", linha)
+    #     cv2.waitKey(1)
+    #
+    #     print(f"[DEBUG VERDE] pixels={pixels_verde} | contornos={n_contornos} "
+    #           f"| esq={contador_esquerda} dir={contador_direita} 180={contador_180}")
+    # =======================
 
     if len(contours_grn) == 0:
         return None
 
     acao = check_green(contours_grn, black_image, green_image)
+
+    # =======================
+    # DEBUG AÇÃO — imprime decisão final do verde
+    # =======================
+    # if DEBUG_VERDE and acao and acao != "RETO":
+    #     print(f"[DEBUG VERDE] AÇÃO DETECTADA: {acao}")
+    # =======================
+
     return acao if acao != "RETO" else None
+
 
 def achar_area(contours):
     area_preta = cv2.contourArea(max(contours, key=cv2.contourArea)) if contours else 0
@@ -548,13 +610,24 @@ def achar_area(contours):
         parar()
         time.sleep(1000.0)
 
-def area(): 
+def area(contours): 
     print("estou na area")   
     print(distancia_esquerda())
     mover (-19,-19)
     time.sleep(0.09)
-    parar()
-    time.sleep(1000.0)
+
+    maior = max(contours, key=cv2.contourArea)
+
+    while True:
+        mover(25,25)
+        if distancia_frente() <= 6 or len(contours) == 1 and cv2.contourArea(maior) > AREA_MIN:
+            mover(-10,-10)
+            time.sleep(0.09)
+            if distancia_frente() <= 6:
+                guinada2("E", 45, 40)
+            if len(contours) == 1 and cv2.contourArea(maior) > AREA_MIN:
+                mover(-10,-10)
+                time.sleep(0.09)
 
 def girar_ate_linha(direcao, velocidade=60, tolerancia=40, timeout=5.0):
     inicio = time.time()
@@ -566,26 +639,21 @@ def girar_ate_linha(direcao, velocidade=60, tolerancia=40, timeout=5.0):
 
         cx, contours, roi, mask = visao(frame)
 
-        #cv2.imshow("roi", roi)
-        #cv2.imshow("mask", mask)
-        #cv2.waitKey(1)
-
         w = roi.shape[1]
         centro = w // 2
 
-        # Linha visível e centralizada — para
         if cx is not None and abs(cx - centro) < tolerancia:
             print("[girar_ate_linha] linha centralizada!")
             parar()
             break
 
-        # Gira na direção pedida
         if direcao == "ESQUERDA":
             mover(-velocidade, velocidade)
         elif direcao == "DIREITA":
             mover(velocidade, -velocidade)
         else:
             mover(velocidade, velocidade)    
+
 # =========================
 # CONTROLE (SEU CÓDIGO)
 # =========================
@@ -595,72 +663,51 @@ def limpar_camera(n=5):
         cap.read()
 
 
-
-def controle(frame):
+def controle(cx, contours, roi):
+    """
+    MUDANÇA: não chama visao() internamente.
+    Recebe cx, contours, roi já calculados no loop principal.
+    """
     global ultimo_erro, ultimo_tempo, em_rampa
-
-    
-    cx, contours, roi, mask = visao(frame)
-    #print(distancia_esquerda())
-    #maior = max(contours, key=cv2.contourArea)
-    #print (abs(cv2.contourArea(maior)))
 
     em_gap = gap(contours)
     w = roi.shape[1]
-    
-    
-        
 
-    # ===== CONTROLE NORMAL =====
     tempo_atual = time.time()
     dt = tempo_atual - ultimo_tempo
     if dt <= 0:
         dt = 0.0001
-                   
 
     if cx is not None:
         centro = w // 2
-        erro = ((cx - centro) / centro  *100)
+        erro = ((cx - centro) / centro * 100)
     else:
         erro = ultimo_erro
-    #print("ERRO", erro)
+
     if abs(erro) < DEADZONE:
         erro = 0
     if gap_debug(contours):
         erro = 0
-    derivada = (erro - ultimo_erro) / dt
 
+    derivada = (erro - ultimo_erro) / dt
     derivada = np.clip(derivada, -300, 300)
 
     ajuste = (Kp * erro) + (Kd * derivada)
-    
-    
-    #print("AJUSTE", ajuste)       
-   # Modo gangorra/rampa
+
     if angulo_y() <= -6:
-
         velocidade_base = 60
-
         velL = velocidade_base + ajuste
         velR = velocidade_base - ajuste
-
         velL = np.clip(velL, 20, 100)
         velR = np.clip(velR, 20, 100)
-
     else:
-
         velocidade_base = VEL_BASE
-
         velL = velocidade_base + ajuste
         velR = velocidade_base - ajuste
-
         velL = np.clip(velL, VEL_MIN, VEL_MAX)
         velR = np.clip(velR, VEL_MIN, VEL_MAX)
 
     mover(velL, velR)
-
-    #cv2.imshow("roi", roi)
-    #cv2.imshow("mask", mask)
 
     ultimo_erro = erro
     ultimo_tempo = tempo_atual
@@ -668,46 +715,91 @@ def controle(frame):
 
 def desvio():
     if distancia_frente() <= 6:
-        mover(-10,-10)
-        time.sleep(0.09)
-        guinada2('D', 85, 35)  
-        mover(40,40)
+        mover(-30,-30)
         time.sleep(0.2)
         mover(-10,-10)
+        time.sleep(0.1)
+        mover(-10,-10)
         time.sleep(0.09)
-        vezes = 0
-        while True:
-            if distancia_esquerda() >=6:
-                mover(0,100)
-                time.sleep(0.12)
-                mover(40,40)
-                time.sleep(0.1)
+        guinada2('D', 55, 35) 
+        mover(-10,-10)
+        time.sleep(0.2)
+        while True :
+            mover(-30,30)
+            print(distancia_esquerda())
+            if distancia_frente() < 15:
+                mover(15,-15)
+                time.sleep(0.3)
+                break  
+        guinada2("D",70,40)
+        mover(35,35)
+        time.sleep(0.6)
+        mover(-10,-10)
+        time.sleep(0.1)
+        guinada2("E",90,35)
+        while True :
+            mover(30,30)
+            print(distancia_esquerda())
+            if distancia_esquerda() < 30:
                 mover(-10,-10)
-                time.sleep(0.09)
-            elif distancia_esquerda() < 4 :
-                guinada2("D", 15, 35)
-                mover(40,40)
-                time.sleep(0.2)
+                time.sleep(0.3)
+                break 
+        while True :
+            mover(30,30)
+            print(distancia_esquerda())
+            if distancia_esquerda() > 15:
                 mover(-10,-10)
-                time.sleep(0.09)
-            vezes += 1
-            if vezes == 18:
+                time.sleep(0.3)
                 break
+            
+        mover(40,40)
+        time.sleep(0.3)
+        mover(-10,-10)
+        time.sleep(0.09)
+        guinada2("E", 90, 40)
+        mover(40,40)
+        time.sleep(0.5)
+        mover(-10,-10)
+        time.sleep(0.09)
+        guinada2("D", 87, 40)
+        mover(-30,-30)
+        time.sleep(0.1)
 
 
 
-def verde(frame):
-    acao_verde = detectar_verde(frame)
+def verde(roi):
+    acao_verde = detectar_verde(roi)
     if acao_verde:
+    
+        if DEBUG_SEM_ACAO:
+            print(f"[DEBUG SEM AÇÃO] Verde detectado: {acao_verde} "
+                  f"| esq={contador_esquerda} dir={contador_direita} 180={contador_180}")
+            return
+
+        print(f"[VERDE] Primeira detecção: {acao_verde} — avançando 80ms")
+        inicio_confirmacao = time.time()
+        acao_confirmada = acao_verde
+ 
+        while time.time() - inicio_confirmacao < 0.02:
+            ret, frame_conf = cap.read()
+            if not ret:
+                continue
+            cx_c, contours_c, roi_c, _ = visao(frame_conf)
+            controle(cx_c, contours_c, roi_c)   
+            nova_acao = detectar_verde(roi_c)
+            if nova_acao:
+                acao_confirmada = nova_acao      
+      
+ 
+        acao_verde = acao_confirmada
+    
         parar()
-        #print ("acao de verde ", acao_verde)
+       
         if acao_verde == "ESQUERDA":
-           
             mover(-10,-10)
             time.sleep(0.1)
             mover(30,30)
-            time.sleep(0.22)
-           
+            time.sleep(0.15)
             print("fui para frente e parei ")
             parar()
             print("virar esquerda ")
@@ -715,51 +807,41 @@ def verde(frame):
             inicio = time.time()
             while time.time() - inicio < 1.0:
                 ret, frame = cap.read()
-                print("s segui linhaaaaaaaaaaaaaaaaaaa ")
+                print("segui linha")
                 if not ret:
                     continue
-                controle(frame)
-            """mover(30,30)
-            time.sleep(0.20)
-            mover(-12,-12)
-            print("virei e parei ")
-            limpar_camera(10)"""
-
+                cx, contours, roi_loop, mask = visao(frame)
+                controle(cx, contours, roi_loop)
 
         elif acao_verde == "DIREITA":
             limpar_camera(10)
-            #guinada2('D', 17, 35)
             mover(-10,-10)
             time.sleep(0.1)
             mover(30,30)
-            time.sleep(0.22)
+            time.sleep(0.15)
             print("fui para frente e parei ")
             parar()
-            print("virar esquerda ")
+            print("virar direita ")
             guinada2('D', 80, 40)
             inicio = time.time()
             while time.time() - inicio < 1.0:
                 ret, frame = cap.read()
-                print("s segui linhaaaaaaaaaaaaaaaaaaa ")
+                print("segui linha")
                 if not ret:
                     continue
-                controle(frame)
+                cx, contours, roi_loop, mask = visao(frame)
+                controle(cx, contours, roi_loop)
 
         elif acao_verde == "GIRAR_180":
             print("gira 180")
-            
             mover(-12,-12)
             time.sleep(0.09)
-            
             guinada2('E', 180, 40)
             mover(30,30)
             time.sleep(0.19)
             mover(-10,-10)
             time.sleep(0.2)
             parar()
-            """
-            time.sleep(0.2)
-            parar()"""
             limpar_camera(10)
 
 def guinada2(LADO, GRAUS, VELOCIDADE):
@@ -770,7 +852,7 @@ def guinada2(LADO, GRAUS, VELOCIDADE):
         while True:
             print(angulo_z())
             mover(VELOCIDADE, -VELOCIDADE)
-            if angulo_z() <= -Graus:   # ← era >= , trocado
+            if angulo_z() <= -Graus:
                 print("PAROU")
                 mover(-10, 10)
                 time.sleep(0.05)
@@ -779,7 +861,7 @@ def guinada2(LADO, GRAUS, VELOCIDADE):
         while True:
             print(angulo_z())
             mover(-VELOCIDADE, VELOCIDADE)
-            if angulo_z() >= Graus:    # ← era <= -Graus, trocado
+            if angulo_z() >= Graus:
                 print("PAROU")
                 mover(10, -10)
                 time.sleep(0.05)
@@ -801,6 +883,7 @@ def detectar_fita_vermelha(frame):
             limpar_camera(10)
             return True
     return False
+
 # =========================
 # LOOP
 # =========================
@@ -853,7 +936,6 @@ def andar_reto(velocidade=30, segundos=1.0):
 
 def gap_debug(contours):
     if len(contours) == 0:
-        #print("[GAP] Tem gap | Ângulo: indefinido (sem contornos)")
         return True
 
     maior = max(contours, key=cv2.contourArea)
@@ -877,17 +959,54 @@ def gap_debug(contours):
         else:
             angulo = 0
 
-        """if p1[1] < camera_y * 0.95 and p2[1] < camera_y * 0.95:
-            #print(f"[GAP] Tem gap | Ângulo: {angulo:.1f}°")
-        else:
-            #print(f"[GAP] Tem gap | Ângulo: indefinido (pontos no rodapé)")"""
-
         return True
 
     print(f"[GAP] Não tem gap | Área: {area:.0f}")
     return False
-"""time.sleep(1.0)"""
-#guinada2('D', 90, 35)
+
+
+# =========================
+# DETECÇÃO DE TRAVAMENTO
+# Compara frame atual com frame de N segundos atrás (não o anterior)
+# =========================
+_trav_frame_ref  = None
+_trav_tempo_ref  = time.time()
+LIMIAR_DIFF      = 8      # diff média mínima pra considerar movimento (0-255)
+TEMPO_TRAV       = 4.0    # segundos sem movimento pra declarar travamento
+INTERVALO_REF    = 2.0    # atualiza frame de referência a cada N segundos
+
+def detectar_travamento(roi):
+    global _trav_frame_ref, _trav_tempo_ref
+
+    gray  = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    agora = time.time()
+
+    # ainda não tem referência — guarda e sai
+    if _trav_frame_ref is None:
+        _trav_frame_ref = gray.copy()
+        _trav_tempo_ref = agora
+        return False
+
+    movimento = np.mean(cv2.absdiff(gray, _trav_frame_ref))
+
+    # atualiza referência a cada INTERVALO_REF segundos
+    if agora - _trav_tempo_ref >= INTERVALO_REF:
+        if movimento >= LIMIAR_DIFF:
+            # havia movimento no intervalo — reseta tudo
+            _trav_frame_ref = gray.copy()
+            _trav_tempo_ref = agora
+            return False
+        else:
+            # sem movimento no intervalo — acumula mas não atualiza ref
+            tempo_parado = agora - _trav_tempo_ref
+            print(f"[TRAV] diff={movimento:.1f} | parado há {tempo_parado:.1f}s")
+            if tempo_parado >= TEMPO_TRAV:
+                print(f"[TRAVAMENTO] Robô travado!")
+                _trav_frame_ref = None  # reseta pra próxima detecção
+                _trav_tempo_ref = agora
+                return True
+
+    return False
 parar()
 
 try:
@@ -905,14 +1024,32 @@ try:
         if detectar_fita_vermelha(frame):
             continue
 
-        ajuste, contours = controle(frame)
-    
-        verde(frame)
-        desvio()
-        #print("distancia frente:", distancia_frente())
-        #print("distancia esquerda:", distancia_esquerda())
+        # =========================
+        # MUDANÇA PRINCIPAL: visao() uma única vez por frame
+        # verde() ANTES de controle() para reagir mais cedo
+        # =========================
+        cx, contours, roi, mask = visao(frame)
+        if detectar_travamento(roi):
+            print("[TRAVAMENTO] Tentando se soltar...")
+            while True:
+                mover(100, 100)
+                time.sleep(0.2)
+                
+                ret, frame_trav = cap.read()
+                if ret:
+                    _, _, roi_trav, _ = visao(frame_trav)
+                    if not detectar_travamento(roi_trav):
+                        print("[TRAVAMENTO] Solto!")
+                        parar()
+                        ultimo_erro  = 0          # ← reseta estado do controle
+                        ultimo_tempo = time.time() # ← evita dt gigante na volta
+                break
 
-        if gap_debug(contours) and distancia_esquerda()< 10:
+        verde(roi)           # ← verde primeiro, recebe roi já pronto
+        ajuste, contours = controle(cx, contours, roi)  # ← aproveita visao() já feito
+        desvio()
+
+        if gap_debug(contours) and distancia_esquerda() < 10:
             inicio_gap = time.time()
             while True:
                 ret, frame = cap.read()
@@ -927,11 +1064,7 @@ try:
                 
                 if time.time() - inicio_gap > 1:
                     
-                    print("[RESGATE] Área de resgate detectada!")
-                    parar()
-                    mover(-15,-15)
-                    time.sleep(0.1)
-                    time.sleep(1000.0)
+                    area(contours)
                     break
                 
                 mover(VEL_GAP, VEL_GAP)
